@@ -62,7 +62,7 @@ cmap = mcolors.ListedColormap(cmap_big(np.linspace(0.7, 0.95, 256)))
 #%% LOADING DATA
 
 # Loading
-dts_raw = pd.read_excel(r'/Users/Home/01__Lavoro/07_Amm/CTG_raw.xls') # Manually insert the path to file
+dts_raw = pd.read_excel(r'/CTG_raw.xls') # Manually insert the path to file within ''
 print(dts_raw.columns)
 
 dts_nonan = dts_raw.dropna(axis=0).reset_index(drop=True) # remove rows with nan
