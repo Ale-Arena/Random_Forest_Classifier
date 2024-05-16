@@ -1,0 +1,491 @@
+#%% LIBRARIES
+
+import dabest
+import seaborn as sns
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+import matplotlib.ticker as ticker
+import matplotlib.dates as mdates
+import graphviz 
+import datetime as dt
+import pandas as pd
+import sklearn as skl
+from sklearn import tree
+from sklearn.preprocessing import StandardScaler, FunctionTransformer
+from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
+from sklearn.feature_selection import mutual_info_classif, f_classif, SelectKBest
+from sklearn.model_selection import train_test_split, cross_val_score, cross_val_predict, cross_validate
+from sklearn.metrics import mean_squared_error,confusion_matrix, classification_report, precision_score, recall_score, accuracy_score, roc_curve, roc_auc_score
+from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier, export_graphviz
+
+
+import statistics as st
+import scipy as sp
+import numpy as np
+from IPython import get_ipython
+from scipy.optimize import curve_fit
+
+
+
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+from matplotlib import cm
+
+plt.style.use('fivethirtyeight')
+
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['font.serif'] = 'Ubuntu'
+plt.rcParams['font.monospace'] = 'Ubuntu Mono'
+plt.rcParams['font.size'] = 10
+plt.rcParams['axes.labelsize'] = 10
+plt.rcParams['axes.labelweight'] = 'bold'
+plt.rcParams['axes.titlesize'] = 10
+plt.rcParams['xtick.labelsize'] = 8
+plt.rcParams['ytick.labelsize'] = 8
+plt.rcParams['legend.fontsize'] = 10
+plt.rcParams['figure.titlesize'] = 12
+plt.rcParams['image.cmap'] = 'jet'
+plt.rcParams['image.interpolation'] = 'none'
+plt.rcParams['figure.figsize'] = (16, 8)
+plt.rcParams['lines.linewidth'] = 2
+plt.rcParams['lines.markersize'] = 8
+
+colors = ['xkcd:pale orange', 'xkcd:sea blue', 'xkcd:pale red', 'xkcd:sage green', 'xkcd:terra cotta', 'xkcd:dull purple', 'xkcd:teal', 'xkcd:goldenrod', 'xkcd:cadet blue', 
+          'xkcd:scarlet']
+mpl.rcParams['axes.prop_cycle'] = mpl.cycler(color=colors) 
+cmap_big = cm.get_cmap('Spectral', 512)
+cmap = mcolors.ListedColormap(cmap_big(np.linspace(0.7, 0.95, 256)))
+
+
+
+#%% LOADING DATA
+
+# Loading
+dts_raw = pd.read_excel(r'/Users/Home/01__Lavoro/07_Amm/CTG_raw.xls') # Manually insert the path to file
+print(dts_raw.columns)
+
+dts_nonan = dts_raw.dropna(axis=0).reset_index(drop=True) # remove rows with nan
+
+# Create list of names of features and dependent variable
+varlist = ['LB', 'AC', 'FM', 'UC', 'DL', 'DS', 'DP', 'ASTV', 'MSTV', 'ALTV', 'MLTV', 'Width', 'Min', 'Max', 'Nmax', 'Nzeros', 'Mode', 'Mean', 'Median', 'Variance', 'Tendency', 'NSP']
+
+# Extract data of interest
+dts = dts_nonan.loc[:, varlist]
+
+
+#%% DATASET EXPLORATION and PREPARATION - BALANCING 
+
+
+dts.info() # check datatype
+descriptive= dts.describe(include='all') # some simple statistics: value numerosity, unique value numerosity, most frequent value, mean, std, max, min
+
+
+# How many unique values for each column (variables)
+uniqueval = pd.DataFrame({ 'var'     : dts.columns,
+                          'uniqueval': 0 })
+for rr in range (np.size(uniqueval, axis=0)):
+    uniqueval.iloc[rr,1] = np.size(dts.iloc[:,rr].value_counts(), axis=0)
+del rr
+
+
+# n of samples for all classes of dependend variable 
+classes= dts['NSP'].value_counts() 
+
+
+
+#### Random undersampling of indexes (samples) for balanced dataset (all classes with same number of samples)
+inx_c1 = pd.DataFrame( dts.index[dts["NSP"]==1]).sample (n = classes.min(), replace = False, random_state = 123).reset_index(drop=True)
+inx_c2 = pd.DataFrame( dts.index[dts["NSP"]==2]).sample (n = classes.min(), replace = False, random_state = 321).reset_index(drop=True)
+inx_c3 = pd.DataFrame( dts.index[dts["NSP"]==3])
+
+inx_balanced = pd.concat([inx_c1, inx_c2, inx_c3], ignore_index=True).to_numpy()
+
+# Extract balanced data
+data = (dts.loc[inx_balanced[:,0], :]).reset_index(drop=True)
+
+
+#%% EXPLORATIVE STATISTICS
+
+#### Descriptive statistics with median and mad and Inferential Statistics to assess class diferences
+statistics_median = pd.DataFrame({'var'         : varlist[:-1],
+                                  'median_c1'   : 0,
+                                  'median_c2'   : 0,
+                                  'median_c3'   : 0,
+                                  'MAD_c1'      : 0,
+                                  'MAD_c2'      : 0,
+                                  'MAD_c3'      : 0,
+                                  'Kruskal_pval': 0,
+                                  'Bonf_crrect' : 0
+                                })
+
+for vv in range (np.size(statistics_median, axis=0)):
+    # descriptive stat
+    statistics_median.loc[vv, 'median_c1'] = round(np.median (data.loc[data.index[data["NSP"]==1], varlist[vv]] , axis=0), 2)
+    statistics_median.loc[vv, 'median_c2'] = round(np.median (data.loc[data.index[data["NSP"]==2], varlist[vv]] , axis=0), 2)
+    statistics_median.loc[vv, 'median_c3'] = round(np.median (data.loc[data.index[data["NSP"]==3], varlist[vv]] , axis=0), 2)
+    
+    statistics_median.loc[vv, 'MAD_c1']    = round(sp.stats.median_abs_deviation (data.loc[data.index[data["NSP"]==1], varlist[vv]] , axis=0), 2)
+    statistics_median.loc[vv, 'MAD_c2']    = round(sp.stats.median_abs_deviation (data.loc[data.index[data["NSP"]==2], varlist[vv]] , axis=0), 2)
+    statistics_median.loc[vv, 'MAD_c3']    = round(sp.stats.median_abs_deviation (data.loc[data.index[data["NSP"]==3], varlist[vv]] , axis=0), 2)
+    
+    class_1 = data.loc[data.index[data["NSP"]==1], varlist[vv]].to_numpy()
+    class_2 = data.loc[data.index[data["NSP"]==2], varlist[vv]].to_numpy()
+    class_3 = data.loc[data.index[data["NSP"]==3], varlist[vv]].to_numpy()
+    
+    # inferential stat to asses effect of class for each feature (Kruskal-Wallis test)
+    statistics_median.loc[vv, 'Kruskal_pval'] = sp.stats.kruskal (class_1, class_2, class_3)[1]
+    # correction for multiple comparisons
+    if statistics_median.loc[vv, 'Kruskal_pval'] <= 0.05/np.size(statistics_median, axis=0):
+        statistics_median.loc[vv, 'Bonf_crrect'] = "sig_diff"
+    else:
+        statistics_median.loc[vv, 'Bonf_crrect'] = "no_diff"
+    
+    del class_1, class_2, class_3
+del vv
+
+
+
+
+#### Descriptive statistics with mean and std and Inferential Statistics to assess class diferences
+statistics_mean = pd.DataFrame({'var'         : varlist[:-1],
+                                'mean_c1'     : 0,
+                                'mean_c2'     : 0,
+                                'mean_c3'     : 0,
+                                'std_c1'      : 0,
+                                'std_c2'      : 0,
+                                'std_c3'      : 0,
+                                'Kruskal_pval': 0,
+                                'Bonf_crrect' : 0
+                               })
+
+
+for vv in range (np.size(statistics_mean, axis=0)):
+    # descriptive stat
+    statistics_mean.loc[vv, 'mean_c1'] = round(np.mean (data.loc[data.index[data["NSP"]==1], varlist[vv]] , axis=0), 2)
+    statistics_mean.loc[vv, 'mean_c2'] = round(np.mean (data.loc[data.index[data["NSP"]==2], varlist[vv]] , axis=0), 2)
+    statistics_mean.loc[vv, 'mean_c3'] = round(np.mean (data.loc[data.index[data["NSP"]==3], varlist[vv]] , axis=0), 2)
+    
+    statistics_mean.loc[vv, 'std_c1']    = round(np.std (data.loc[data.index[data["NSP"]==1], varlist[vv]] , axis=0), 2)
+    statistics_mean.loc[vv, 'std_c2']    = round(np.std (data.loc[data.index[data["NSP"]==2], varlist[vv]] , axis=0), 2)
+    statistics_mean.loc[vv, 'std_c3']    = round(np.std (data.loc[data.index[data["NSP"]==3], varlist[vv]] , axis=0), 2)
+    
+    class_1 = data.loc[data.index[data["NSP"]==1], varlist[vv]].to_numpy()
+    class_2 = data.loc[data.index[data["NSP"]==2], varlist[vv]].to_numpy()
+    class_3 = data.loc[data.index[data["NSP"]==3], varlist[vv]].to_numpy()
+    
+    # inferential stat to asses effect of class for each feature (Kruskal-Wallis test)
+    statistics_mean.loc[vv, 'Kruskal_pval'] = sp.stats.kruskal (class_1, class_2, class_3)[1]
+    # correction for multiple comparisons
+    if statistics_mean.loc[vv, 'Kruskal_pval'] <= 0.05/np.size(statistics_mean, axis=0):
+        statistics_mean.loc[vv, 'Bonf_crrect'] = "sig_diff"
+    else:
+        statistics_mean.loc[vv, 'Bonf_crrect'] = "no_diff"
+    
+    del class_1, class_2, class_3
+del vv
+
+
+#%% VISUALIZATION OF FEATURE DISTRIBUTIONS IN RELATION TO CLASSES 
+
+fig = plt.figure(figsize=(16, 10))
+
+# continuous variables
+i = 1 
+for col in varlist[:-1]:
+    if col != 'Tendency':
+        fig.add_subplot(3,7,i)
+        sns.violinplot(x="NSP", y=col, alpha=.2, data=data, linewidth = 0.8, saturation=.6)
+        i += 1
+
+# categorial variable
+fig.add_subplot(3,7,21)
+sns.countplot(x='Tendency', data=data, hue='NSP', alpha=.9)
+
+plt.show()
+del i
+
+
+
+#%% CLEAR USLESS VAR
+
+del descriptive, dts, dts_nonan, dts_raw, inx_balanced, inx_c1, inx_c2, inx_c3, fig 
+
+
+#%% TRAIN & TEST DATASET
+
+# Dummyfication of categorical variable
+data_dum = pd.get_dummies(data, drop_first=True, columns=['Tendency'])
+
+# Predictors and dep var separation
+Y = data_dum['NSP']                 # extract dep var
+X = data_dum.drop(['NSP'], axis=1)  # extract predictors
+del data_dum
+
+# define train and test datasets
+X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2, random_state=123, shuffle=True)
+X_train = X_train.reset_index(drop=True)
+X_test  = X_test.reset_index(drop=True)
+y_train = y_train.reset_index(drop=True)
+y_test  = y_test.reset_index(drop=True)
+print(y_test.value_counts())
+print(y_train.value_counts())
+
+
+#%% RANDFOREST FUNCTION
+#
+# Function to obtain desired outputs from Random Forest classifier
+#  
+
+def randforest (X_train, X_test, y_train, y_test, alpha, tree_n):
+    
+## Model fitting 
+    forest = RandomForestClassifier (n_estimators=100, criterion='gini', max_depth=None, 
+                                     max_features='sqrt', bootstrap=True, random_state=123, 
+                                     ccp_alpha = alpha)
+    forest.fit(X_train, y_train) 
+
+
+## Feature Importances
+    importances_mean = pd.DataFrame(data= forest.feature_importances_, index=X_train.columns, columns=['Gini_importance']).sort_values(by='Gini_importance', ascending=False) 
+    var_desc = importances_mean.index # extract ordered feature lables
+
+    # Extract feature importances based on Gini impurity, from all trees (estimators) and reordering
+    importances = np.array([e.feature_importances_ for e in forest.estimators_])
+    importances_trees = pd.DataFrame(importances, columns=X_train.columns)
+    importances_trees_desc = importances_trees.reindex(columns = var_desc)
+    
+    # Plot Variable Importances (mean +- std)
+    fig = plt.figure(figsize=(16, 6))
+    sns.barplot(data=importances_trees_desc, ci="sd", alpha=.7)
+    plt.title('Feature relevance for classification')
+    plt.ylabel('Gini Importance')
+    plt.xticks(rotation=20)
+    plt.show()
+
+
+## Model Performance
+    prediction = forest.predict(X_test)
+    performance = classification_report(y_test, forest.predict(X_test))
+    print(performance)
+    cmatrix = confusion_matrix (y_test, prediction) # Confusion Matrix
+
+    # Plot Confusion Matrix
+    fig_1 = plt.figure(figsize=(16, 6))
+    sns.heatmap(cmatrix,cbar=True,annot=True,square=True,fmt='d',annot_kws={'size': 12},cmap = sns.diverging_palette(220, 10, as_cmap=True))
+    plt.title('Confusion matrix', fontsize=14)
+    plt.show()
+
+
+## Exemplificative Single Ttree 
+    single_tree = forest.estimators_[tree_n] # extraction of one tree from the forest
+    tree_complexity = single_tree.get_n_leaves()
+    
+    # Plot one single tree in pdf file
+    dot_data = tree.export_graphviz(single_tree, out_file=None, feature_names=X_train.columns, class_names= True, filled=True, rounded=True,special_characters=True)  
+    graph = graphviz.Source(dot_data)  
+    graph.render('Single_Tree')
+    
+
+## Results
+    return (importances_mean, prediction, performance, tree_complexity)
+
+
+
+#%%  FULL RANDOM FOREST AND INITIAL EVALUATION (NO PRUNING)
+
+alpha  = 0 # select the desired alpha
+tree_n = 88 # select the exemplificative tree to extract
+
+# Results with Optimal Alpha Selection 
+START_importances_mean, START_prediction, START_performance, START_tree_complexity = randforest (X_train, X_test, y_train, y_test, alpha, tree_n)
+
+del alpha, tree_n
+
+
+
+#%% OPTIMAL ALPHA VALUE SELECTION
+
+#### Model fitting 
+
+forest = RandomForestClassifier (n_estimators=100, criterion='gini', max_depth=None, 
+                                 max_features='sqrt', bootstrap=True, random_state=123, 
+                                 ccp_alpha = 0)
+forest.fit(X_train, y_train) 
+
+
+
+#### Alphas Values extraction
+
+# extract the first tree from the forest
+single_tree = forest.estimators_[0] 
+# extract alphas that produce impurity modification
+path = single_tree.cost_complexity_pruning_path(X_train, y_train) 
+# extract effective alphas (no first and last values, corresponding to no-pruning and 1-leaf-only, respectively)
+ccp_alpha_0 = np.round(path['ccp_alphas'], decimals=4)[1:-1]  
+del path, single_tree
+
+
+forest_alphas=pd.DataFrame(ccp_alpha_0) # initialize alphas concatenation
+# concatenate all alphas from each tree in the forest
+for tt in range (np.size(forest.estimators_, axis=0)-1):
+    path = forest.estimators_[tt+1].cost_complexity_pruning_path(X_train, y_train) 
+    ccp_alphas = pd.DataFrame(np.round(path['ccp_alphas'], decimals=4)[1:-1])
+    forest_alphas= pd.concat ([forest_alphas, ccp_alphas])
+    del path, ccp_alphas 
+del tt
+
+# conserve only unique values of alphas in the forest
+unique_alphas = np.sort((forest_alphas.squeeze()).unique())
+del forest_alphas
+
+
+#### Cross Validation to Identify the Optimal Alpha for the Random Forest
+
+# scores to evaluate
+scoring = ['accuracy','precision_macro', 'recall_macro', 'f1_macro'] 
+# prealocation of scoring matrix
+forest_scores = pd.DataFrame({'alphas'         : unique_alphas,
+                              'accuracy'       : 0,
+                              'precision_macro': 0,
+                              'recall_macro'   : 0,
+                              'f1_macro'       : 0
+                             })
+
+# Cycle across alphas and test new forests with cross-validation and compute performance scores
+for aa in range (np.size(unique_alphas, axis=0)):
+    forest_alpha = RandomForestClassifier (n_estimators=100, criterion='gini', max_depth=None, max_features='sqrt', bootstrap=True, random_state=123, ccp_alpha= unique_alphas[aa])
+    cross_val_scores = cross_validate(forest_alpha, X_train, y_train, scoring=scoring, cv=10) # 10-fold cross validation and average across 10 cv-test scores
+    forest_scores.loc[aa,'accuracy']        = np.round( np.mean(cross_val_scores['test_accuracy'], axis=0), decimals=3)
+    forest_scores.loc[aa,'precision_macro'] = np.round( np.mean(cross_val_scores['test_precision_macro'], axis=0), decimals=3)
+    forest_scores.loc[aa,'recall_macro']    = np.round( np.mean(cross_val_scores['test_recall_macro'], axis=0), decimals=3)
+    forest_scores.loc[aa,'f1_macro']        = np.round( np.mean(cross_val_scores['test_f1_macro'], axis=0), decimals=3)
+    del forest_alpha, cross_val_scores
+del aa
+
+# Plot Model Performance vs Alphas
+plt.clf()
+fig = plt.figure(num=1, figsize=(10,4), dpi=300)
+plt.subplot(1,1,1)
+plt.plot(forest_scores["alphas"], forest_scores["accuracy"],        marker='+', label="accuracy", drawstyle="default")
+plt.plot(forest_scores["alphas"], forest_scores["precision_macro"], marker='+', label="precision",drawstyle="default")
+plt.plot(forest_scores["alphas"], forest_scores["recall_macro"],    marker='+', label="recall",   drawstyle="default")
+plt.plot(forest_scores["alphas"], forest_scores["f1_macro"],        marker='+', label="f1",       drawstyle="default")
+plt.legend()
+plt.xlabel("Alpha values")
+plt.ylabel("Model performance on CV-test data")
+plt.title('Model Performance vs Alphas')
+plt.show()
+
+#%%  OPTIMAL ALPHA SETTING
+
+scr = "accuracy" # define the score of interest: "accuracy", "precision_macro", "recall_macro", "f1_macro"
+
+# Optimal Alpha identification
+alphas = forest_scores.loc[forest_scores.index[forest_scores[scr] == forest_scores.loc[:,scr].max()],:] # extract all aphas corresponding to max scr
+optimal_alpha = alphas['alphas'].max() # if multiple alpha, take the bigger (less complex model) 
+del scr, alphas
+    
+print('optimal_alpha =', optimal_alpha) 
+
+
+#%%  ALPHA-OPTIMIZED RANDOM FOREST AND EVALUATION
+
+alpha  = optimal_alpha
+tree_n = 88 # select the exemplificative tree to extract
+
+# Results with Optimal Alpha Selection 
+OAS_importances_mean, OAS_prediction, OAS_performance, OAS_tree_complexity = randforest (X_train, X_test, y_train, y_test, alpha, tree_n)
+#OAS_importances_mean, OAS_prediction, OAS_performance = randforest (X_train, X_test, y_train, y_test, alpha, tree_n)
+
+del alpha, tree_n
+
+
+#%% OPTIMAL FEATURES SELECTION WITH CROSS VALIDATION
+
+#### Cross Validation to Identify the Optimal N of Features for the Random Forest
+
+# Features
+Features_list = list(OAS_importances_mean.sort_values(by='Gini_importance', ascending=True).index)
+
+# Set parameters of randforest function
+alpha  = optimal_alpha # select the desired alpha
+tree_n = 88 # select the exemplificative tree to extract
+# Set classifier
+forest_features = RandomForestClassifier (n_estimators=100, criterion='gini', max_depth=None, 
+                                          max_features='sqrt', bootstrap=True, random_state=123, ccp_alpha=alpha)
+
+
+# prealocation of scoring matrix
+scoring = ['accuracy','precision_macro', 'recall_macro', 'f1_macro'] 
+
+forest_scores_f = pd.DataFrame({'n_features'     : np.zeros(len(Features_list)),
+                                'accuracy'       : 0,
+                                'precision_macro': 0,
+                                'recall_macro'   : 0,
+                                'f1_macro'       : 0
+                                })
+
+
+# Progressive esclusion of less relevant features (based on Gini Importance)
+# and test new forests with cross-validation and compute performance scores
+for ff in range (np.size(forest_scores_f, axis=0)):
+    
+    Xf_train =  X_train.loc [:, Features_list[ff:]] # progressive esclusion of features    
+    
+    cross_val_scores = cross_validate(forest_features, Xf_train, y_train, scoring=scoring, cv=10) # 10-fold cross validation and average across 10 cv-test scores
+    forest_scores_f.loc[ff,'n_features']      = len(Features_list)-ff
+    forest_scores_f.loc[ff,'accuracy']        = np.round( np.mean(cross_val_scores['test_accuracy'], axis=0), decimals=3)
+    forest_scores_f.loc[ff,'precision_macro'] = np.round( np.mean(cross_val_scores['test_precision_macro'], axis=0), decimals=3)
+    forest_scores_f.loc[ff,'recall_macro']    = np.round( np.mean(cross_val_scores['test_recall_macro'], axis=0), decimals=3)
+    forest_scores_f.loc[ff,'f1_macro']        = np.round( np.mean(cross_val_scores['test_f1_macro'], axis=0), decimals=3)
+
+    del Xf_train
+del ff, forest_features
+
+
+
+# Plot Model Performance vs Number of Features
+plt.clf()
+fig = plt.figure(num=1, figsize=(10,4), dpi=300)
+plt.subplot(1,1,1)
+plt.plot(forest_scores_f["n_features"], forest_scores_f["accuracy"],        marker='+', label="accuracy", drawstyle="default")
+plt.plot(forest_scores_f["n_features"], forest_scores_f["precision_macro"], marker='+', label="precision",drawstyle="default")
+plt.plot(forest_scores_f["n_features"], forest_scores_f["recall_macro"],    marker='+', label="recall",   drawstyle="default")
+plt.plot(forest_scores_f["n_features"], forest_scores_f["f1_macro"],        marker='+', label="f1",       drawstyle="default")
+plt.legend()
+plt.xlabel("Number of Features")
+plt.ylabel("Model performance on CV-test data")
+plt.title('Model Performance vs N Features')
+plt.show()
+
+
+
+#%%  OPTIMAL N FEATURES SETTING
+
+scr = "accuracy" # define the score of interest: "accuracy", "precision_macro", "recall_macro", "f1_macro"
+
+# Optimal Alpha identification
+nfeatures = forest_scores_f.loc[forest_scores_f.index[forest_scores_f[scr] == forest_scores_f.loc[:,scr].max()],:] # extract all aphas corresponding to max scr
+optimal_nfeatures = nfeatures['n_features'].min()  # if multiple nfeatures, take the smaller (less complex model)
+del scr, nfeatures
+    
+print('optimal number of features =', optimal_nfeatures) 
+
+
+
+#%%  N FEATURES-OPTIMIZED RANDOM FOREST AND EVALUATION
+
+optimal_nfeatures = optimal_nfeatures # Manual setting
+
+alpha  = optimal_alpha # select the desired alpha
+tree_n = 88 # select the exemplificative tree to extract
+Xf_train =  X_train.loc [:, Features_list[len(Features_list)-int(optimal_nfeatures):]]
+Xf_test  =  X_test.loc  [:, Features_list[len(Features_list)-int(optimal_nfeatures):]]
+
+# Results with Optimal Alpha Selection 
+OFS_importances_mean, OFS_prediction, OFS_performance, OFS_tree_complexity = randforest (Xf_train, Xf_test, y_train, y_test, alpha, tree_n)
+#OFS_importances_mean, OFS_prediction, OFS_performance = randforest (Xf_train, Xf_test, y_train, y_test, alpha, tree_n)
+
+del alpha, tree_n
+
